@@ -78,7 +78,7 @@ static int16_t dos_input_state(
                {
                   if (id < RARCH_BIND_LIST_END)
                      if (dos_key_state[DOS_KEYBOARD_PORT]
-                           [rarch_keysym_lut[binds[i].key]])
+                           [rarch_keysym_lut[binds[port][i].key]])
                         ret |= (1 << i);
                }
             }
@@ -99,7 +99,7 @@ static int16_t dos_input_state(
       case RETRO_DEVICE_KEYBOARD:
          if (id < RARCH_BIND_LIST_END)
             return (dos_key_state[DOS_KEYBOARD_PORT]
-                  [rarch_keysym_lut[binds[id].key]]);
+                  [rarch_keysym_lut[binds[port][id].key]]);
          break;
    }
 
@@ -133,5 +133,6 @@ input_driver_t input_dos = {
    dos_input_get_capabilities,
    "dos",
    NULL,                         /* grab_mouse */
+   NULL,
    NULL
 };

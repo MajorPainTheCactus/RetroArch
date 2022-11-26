@@ -37,6 +37,26 @@
 #include "../../verbosity.h"
 #include "../../msg_hash.h"
 
+static void gl3_build_default_matrix(float *data)
+{
+   data[0]  =  2.0f;
+   data[1]  =  0.0f;
+   data[2]  =  0.0f;
+   data[3]  =  0.0f;
+   data[4]  =  0.0f;
+   data[5]  =  2.0f;
+   data[6]  =  0.0f;
+   data[7]  =  0.0f;
+   data[8]  =  0.0f;
+   data[9]  =  0.0f;
+   data[10] =  2.0f;
+   data[11] =  0.0f;
+   data[12] = -1.0f;
+   data[13] = -1.0f;
+   data[14] =  0.0f;
+   data[15] =  1.0f;
+}
+
 GLuint gl3_cross_compile_program(
       const uint32_t *vertex, size_t vertex_size,
       const uint32_t *fragment, size_t fragment_size,
@@ -2206,7 +2226,8 @@ gl3_filter_chain_t *gl3_filter_chain_create_from_preset(
    if (!video_shader_load_preset_into_shader(path, shader.get()))
       return nullptr;
 
-   bool last_pass_is_fbo = shader->pass[shader->passes - 1].fbo.valid;
+   bool last_pass_is_fbo = shader->pass[shader->passes - 1].fbo.flags &
+      FBO_SCALE_FLAG_VALID;
 
    std::unique_ptr<gl3_filter_chain> chain{ new gl3_filter_chain(shader->passes + (last_pass_is_fbo ? 1 : 0)) };
    if (!chain)
@@ -2335,7 +2356,7 @@ gl3_filter_chain_t *gl3_filter_chain_create_from_preset(
       if (output.meta.rt_format == SLANG_FORMAT_UNKNOWN)
          output.meta.rt_format = SLANG_FORMAT_R8G8B8A8_UNORM;
 
-      if (!pass->fbo.valid)
+      if (!(pass->fbo.flags & FBO_SCALE_FLAG_VALID))
       {
          bool scale_viewport       = i + 1 == shader->passes;
          if (scale_viewport)
@@ -2370,9 +2391,9 @@ gl3_filter_chain_t *gl3_filter_chain_create_from_preset(
       {
          /* Preset overrides shader.
           * Kinda ugly ... */
-         if (pass->fbo.srgb_fbo)
+         if (pass->fbo.flags & FBO_SCALE_FLAG_SRGB_FBO)
             output.meta.rt_format = SLANG_FORMAT_R8G8B8A8_SRGB;
-         else if (pass->fbo.fp_fbo)
+         else if (pass->fbo.flags & FBO_SCALE_FLAG_FP_FBO)
             output.meta.rt_format = SLANG_FORMAT_R16G16B16A16_SFLOAT;
 
          pass_info.rt_format = gl3_shader::convert_glslang_format(output.meta.rt_format);

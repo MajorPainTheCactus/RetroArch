@@ -71,8 +71,6 @@
 typedef struct sdl_rs90_video sdl_rs90_video_t;
 struct sdl_rs90_video
 {
-   retro_time_t last_frame_time;
-   retro_time_t ff_frame_time_min;
    SDL_Surface *screen;
    void (*scale_frame16)(sdl_rs90_video_t *vid,
          uint16_t *src, unsigned width, unsigned height,
@@ -80,7 +78,6 @@ struct sdl_rs90_video
    void (*scale_frame32)(sdl_rs90_video_t *vid,
          uint32_t *src, unsigned width, unsigned height,
          unsigned src_pitch);
-   bitmapfont_lut_t *osd_font;
    /* Scaling/padding/cropping parameters */
    unsigned content_width;
    unsigned content_height;
@@ -90,21 +87,24 @@ struct sdl_rs90_video
    unsigned frame_padding_y;
    unsigned frame_crop_x;
    unsigned frame_crop_y;
+   bool rgb32;
+   bool menu_active;
+   bool was_in_menu;
+   bool mode_valid;
+   retro_time_t last_frame_time;
+   retro_time_t ff_frame_time_min;
    enum dingux_rs90_softfilter_type softfilter_type;
 #if defined(DINGUX_BETA)
    enum dingux_refresh_rate refresh_rate;
 #endif
-   uint32_t font_colour32;
-   uint16_t font_colour16;
-   uint16_t menu_texture[SDL_RS90_WIDTH * SDL_RS90_HEIGHT];
-   bool rgb32;
    bool vsync;
    bool keep_aspect;
    bool scale_integer;
-   bool menu_active;
-   bool was_in_menu;
    bool quitting;
-   bool mode_valid;
+   bitmapfont_lut_t *osd_font;
+   uint32_t font_colour32;
+   uint16_t font_colour16;
+   uint16_t menu_texture[SDL_RS90_WIDTH * SDL_RS90_HEIGHT];
 };
 
 /* Image interpolation START */
@@ -724,7 +724,7 @@ static void sdl_rs90_gfx_free(void *data)
 }
 
 static void sdl_rs90_input_driver_init(
-      const char *input_driver_name, const char *joypad_driver_name,
+      const char *input_drv_name, const char *joypad_drv_name,
       input_driver_t **input, void **input_data)
 {
    /* Sanity check */
@@ -736,13 +736,13 @@ static void sdl_rs90_input_driver_init(
 
    /* If input driver name is empty, cannot
     * initialise anything... */
-   if (string_is_empty(input_driver_name))
+   if (string_is_empty(input_drv_name))
       return;
 
-   if (string_is_equal(input_driver_name, "sdl_dingux"))
+   if (string_is_equal(input_drv_name, "sdl_dingux"))
    {
       *input_data = input_driver_init_wrap(&input_sdl_dingux,
-            joypad_driver_name);
+            joypad_drv_name);
 
       if (*input_data)
          *input = &input_sdl_dingux;
@@ -751,10 +751,10 @@ static void sdl_rs90_input_driver_init(
    }
 
 #if defined(HAVE_SDL) || defined(HAVE_SDL2)
-   if (string_is_equal(input_driver_name, "sdl"))
+   if (string_is_equal(input_drv_name, "sdl"))
    {
       *input_data = input_driver_init_wrap(&input_sdl,
-            joypad_driver_name);
+            joypad_drv_name);
 
       if (*input_data)
          *input = &input_sdl;
@@ -764,10 +764,10 @@ static void sdl_rs90_input_driver_init(
 #endif
 
 #if defined(HAVE_UDEV)
-   if (string_is_equal(input_driver_name, "udev"))
+   if (string_is_equal(input_drv_name, "udev"))
    {
       *input_data = input_driver_init_wrap(&input_udev,
-            joypad_driver_name);
+            joypad_drv_name);
 
       if (*input_data)
          *input = &input_udev;
@@ -777,10 +777,10 @@ static void sdl_rs90_input_driver_init(
 #endif
 
 #if defined(__linux__)
-   if (string_is_equal(input_driver_name, "linuxraw"))
+   if (string_is_equal(input_drv_name, "linuxraw"))
    {
       *input_data = input_driver_init_wrap(&input_linuxraw,
-            joypad_driver_name);
+            joypad_drv_name);
 
       if (*input_data)
          *input = &input_linuxraw;
@@ -803,8 +803,8 @@ static void *sdl_rs90_gfx_init(const video_info_t *video,
    bool refresh_rate_valid                       = false;
    float hw_refresh_rate                         = 0.0f;
 #endif
-   const char *input_driver_name                 = settings->arrays.input_driver;
-   const char *joypad_driver_name                = settings->arrays.input_joypad_driver;
+   const char *input_drv_name                    = settings->arrays.input_driver;
+   const char *joypad_drv_name                   = settings->arrays.input_joypad_driver;
    uint32_t surface_flags                        = (video->vsync) ?
          SDL_RS90_SURFACE_FLAGS_VSYNC_ON :
          SDL_RS90_SURFACE_FLAGS_VSYNC_OFF;
@@ -899,8 +899,8 @@ static void *sdl_rs90_gfx_init(const video_info_t *video,
 
    SDL_ShowCursor(SDL_DISABLE);
 
-   sdl_rs90_input_driver_init(input_driver_name,
-         joypad_driver_name, input, input_data);
+   sdl_rs90_input_driver_init(input_drv_name,
+         joypad_drv_name, input, input_data);
 
    /* Initialise OSD font */
    sdl_rs90_init_font_color(vid);

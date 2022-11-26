@@ -55,6 +55,7 @@
 #include "../../dynamic.h"
 
 #include "../../retroarch.h"
+#include "../../runloop.h"
 #include "../../record/record_driver.h"
 #include "../../verbosity.h"
 #include "../common/gl2_common.h"
@@ -158,6 +159,15 @@ typedef struct __GLsync *GLsync;
 #endif
 #endif
 
+enum gl2_renderchain_flags
+{
+   GL2_CHAIN_FLAG_EGL_IMAGES           = (1 << 0),
+   GL2_CHAIN_FLAG_HAS_FP_FBO           = (1 << 1),
+   GL2_CHAIN_FLAG_HAS_SRGB_FBO_GLES3   = (1 << 2),
+   GL2_CHAIN_FLAG_HAS_SRGB_FBO         = (1 << 3),
+   GL2_CHAIN_FLAG_HW_RENDER_DEPTH_INIT = (1 << 4)
+};
+
 typedef struct gl2_renderchain_data
 {
    int fbo_pass;
@@ -174,12 +184,7 @@ typedef struct gl2_renderchain_data
    unsigned fence_count;
 
    struct gfx_fbo_scale fbo_scale[GFX_MAX_SHADERS];
-
-   bool egl_images;
-   bool has_fp_fbo;
-   bool has_srgb_fbo_gles3;
-   bool has_srgb_fbo;
-   bool hw_render_depth_init;
+   uint8_t flags;
 } gl2_renderchain_data_t;
 
 #if (!defined(HAVE_OPENGLES) || defined(HAVE_OPENGLES3))
@@ -200,7 +205,7 @@ typedef struct gl2_renderchain_data
 #define gl2_rb_storage       glRenderbufferStorageOES
 #define gl2_delete_rb        glDeleteRenderbuffersOES
 
-#elif (defined(__MACH__) && (defined(__ppc__) || defined(__ppc64__)))
+#elif (defined(__MACH__) && defined(MAC_OS_X_VERSION_MAX_ALLOWED) && (MAC_OS_X_VERSION_MAX_ALLOWED < 101200))
 #define gl2_fb_texture_2d(a, b, c, d, e) glFramebufferTexture2DEXT(a, b, c, d, e)
 #define gl2_check_fb_status(target) glCheckFramebufferStatusEXT(target)
 #define gl2_gen_fb(n, ids)   glGenFramebuffersEXT(n, ids)
@@ -272,7 +277,7 @@ static bool gl2_shader_scale(gl2_t *gl,
    if (!scaler || !scaler->scale)
       return false;
 
-   scaler->scale->valid = false;
+   scaler->scale->flags &= ~FBO_SCALE_FLAG_VALID;
 
    gl->shader->shader_scale(gl->shader_data,
          scaler->idx, scaler->scale);
@@ -371,7 +376,13 @@ static bool gl2_recreate_fbo(
 static void gl2_set_projection(gl2_t *gl,
       struct video_ortho *ortho, bool allow_rotate)
 {
-   math_matrix_4x4 rot;
+   static math_matrix_4x4 rot     = {
+      { 0.0f,     0.0f,    0.0f,    0.0f ,
+        0.0f,     0.0f,    0.0f,    0.0f ,
+        0.0f,     0.0f,    0.0f,    0.0f ,
+        0.0f,     0.0f,    0.0f,    1.0f }
+   };
+   float radians, cosine, sine;
 
    /* Calculate projection. */
    matrix_4x4_ortho(gl->mvp_no_rot, ortho->left, ortho->right,
@@ -383,7 +394,13 @@ static void gl2_set_projection(gl2_t *gl,
       return;
    }
 
-   matrix_4x4_rotate_z(rot, M_PI * gl->rotation / 180.0f);
+   radians                 = M_PI * gl->rotation / 180.0f;
+   cosine                  = cosf(radians);
+   sine                    = sinf(radians);
+   MAT_ELEM_4X4(rot, 0, 0) = cosine;
+   MAT_ELEM_4X4(rot, 0, 1) = -sine;
+   MAT_ELEM_4X4(rot, 1, 0) = sine;
+   MAT_ELEM_4X4(rot, 1, 1) = cosine;
    matrix_4x4_multiply(gl->mvp, rot, gl->mvp_no_rot);
 }
 
@@ -572,7 +589,7 @@ static void gl2_renderchain_render(
    }
 
 #if defined(GL_FRAMEBUFFER_SRGB) && !defined(HAVE_OPENGLES)
-   if (chain->has_srgb_fbo)
+   if (chain->flags & GL2_CHAIN_FLAG_HAS_SRGB_FBO)
       glDisable(GL_FRAMEBUFFER_SRGB);
 #endif
 
@@ -681,7 +698,7 @@ static void gl2_renderchain_deinit_hw_render(
 
    if (gl->hw_render_fbo_init)
       gl2_delete_fb(gl->textures, gl->hw_render_fbo);
-   if (chain->hw_render_depth_init)
+   if (chain->flags & GL2_CHAIN_FLAG_HW_RENDER_DEPTH_INIT)
       gl2_delete_rb(gl->textures, chain->hw_render_depth);
    gl->hw_render_fbo_init = false;
 
@@ -817,16 +834,17 @@ static void gl2_create_fbo_texture(gl2_t *gl,
 
    GL2_BIND_TEXTURE(texture, wrap_enum, mag_filter, min_filter);
 
-   fp_fbo   = chain->fbo_scale[i].fp_fbo;
+   fp_fbo   = chain->fbo_scale[i].flags & FBO_SCALE_FLAG_FP_FBO;
 
    if (fp_fbo)
    {
-      if (!chain->has_fp_fbo)
+      if (!(chain->flags & GL2_CHAIN_FLAG_HAS_FP_FBO))
          RARCH_ERR("[GL]: Floating-point FBO was requested, but is not supported. Falling back to UNORM. Result may band/clip/etc.!\n");
    }
 
 #if !defined(HAVE_OPENGLES2)
-   if (fp_fbo && chain->has_fp_fbo)
+   if (     fp_fbo 
+         && (chain->flags & GL2_CHAIN_FLAG_HAS_FP_FBO))
    {
       RARCH_LOG("[GL]: FBO pass #%d is floating-point.\n", i);
       gl2_load_texture_image(GL_TEXTURE_2D, 0, GL_RGBA32F,
@@ -837,18 +855,19 @@ static void gl2_create_fbo_texture(gl2_t *gl,
 #endif
    {
 #ifndef HAVE_OPENGLES
-      bool srgb_fbo = chain->fbo_scale[i].srgb_fbo;
+      bool srgb_fbo = chain->fbo_scale[i].flags & FBO_SCALE_FLAG_SRGB_FBO;
 
       if (!fp_fbo && srgb_fbo)
       {
-         if (!chain->has_srgb_fbo)
+         if (!(chain->flags & GL2_CHAIN_FLAG_HAS_SRGB_FBO))
                RARCH_ERR("[GL]: sRGB FBO was requested, but it is not supported. Falling back to UNORM. Result may have banding!\n");
       }
 
       if (force_srgb_disable)
          srgb_fbo = false;
 
-      if (srgb_fbo && chain->has_srgb_fbo)
+      if (      srgb_fbo 
+            && (chain->flags & GL2_CHAIN_FLAG_HAS_SRGB_FBO))
       {
          RARCH_LOG("[GL]: FBO pass #%d is sRGB.\n", i);
 #ifdef HAVE_OPENGLES2
@@ -857,7 +876,9 @@ static void gl2_create_fbo_texture(gl2_t *gl,
          glTexImage2D(GL_TEXTURE_2D,
                0, GL_SRGB_ALPHA_EXT,
                gl->fbo_rect[i].width, gl->fbo_rect[i].height, 0,
-               chain->has_srgb_fbo_gles3 ? GL_RGBA : GL_SRGB_ALPHA_EXT,
+               (chain->flags & GL2_CHAIN_FLAG_HAS_SRGB_FBO_GLES3) 
+               ? GL_RGBA 
+               : GL_SRGB_ALPHA_EXT,
                GL_UNSIGNED_BYTE, NULL);
 #else
          gl2_load_texture_image(GL_TEXTURE_2D,
@@ -1049,7 +1070,7 @@ static void gl2_renderchain_start_render(
    gl->coords.vertex = fbo_vertexes;
 
 #if defined(GL_FRAMEBUFFER_SRGB) && !defined(HAVE_OPENGLES)
-   if (chain->has_srgb_fbo)
+   if (chain->flags & GL2_CHAIN_FLAG_HAS_SRGB_FBO)
       glEnable(GL_FRAMEBUFFER_SRGB);
 #endif
 }
@@ -1086,7 +1107,8 @@ static void gl2_renderchain_init(
    gl2_shader_scale(gl, &scaler);
 
    /* we always want FBO to be at least initialized on startup for consoles */
-   if (shader_info.num == 1 && !scale.valid)
+   if (      shader_info.num == 1 
+         && (!(scale.flags & FBO_SCALE_FLAG_VALID)))
       return;
 
    if (!gl->has_fbo)
@@ -1096,15 +1118,16 @@ static void gl2_renderchain_init(
    }
 
    chain->fbo_pass = shader_info.num - 1;
-   if (scale_last.valid)
+   if (scale_last.flags & FBO_SCALE_FLAG_VALID)
       chain->fbo_pass++;
 
-   if (!scale.valid)
+   if (!(scale.flags & FBO_SCALE_FLAG_VALID))
    {
-      scale.scale_x = 1.0f;
-      scale.scale_y = 1.0f;
-      scale.type_x  = scale.type_y = RARCH_SCALE_INPUT;
-      scale.valid   = true;
+      scale.scale_x    = 1.0f;
+      scale.scale_y    = 1.0f;
+      scale.type_x     = RARCH_SCALE_INPUT;
+      scale.type_y     = RARCH_SCALE_INPUT;
+      scale.flags     |= FBO_SCALE_FLAG_VALID;
    }
 
    chain->fbo_scale[0] = scale;
@@ -1116,12 +1139,12 @@ static void gl2_renderchain_init(
 
       gl2_shader_scale(gl, &scaler);
 
-      if (!chain->fbo_scale[i].valid)
+      if (!(chain->fbo_scale[i].flags & FBO_SCALE_FLAG_VALID))
       {
          chain->fbo_scale[i].scale_x = chain->fbo_scale[i].scale_y = 1.0f;
          chain->fbo_scale[i].type_x  = chain->fbo_scale[i].type_y  =
             RARCH_SCALE_INPUT;
-         chain->fbo_scale[i].valid   = true;
+         chain->fbo_scale[i].flags  |= FBO_SCALE_FLAG_VALID;
       }
    }
 
@@ -1202,7 +1225,7 @@ static bool gl2_renderchain_init_hw_render(
    if (depth)
    {
       gl2_gen_rb(gl->textures, chain->hw_render_depth);
-      chain->hw_render_depth_init = true;
+      chain->flags |= GL2_CHAIN_FLAG_HW_RENDER_DEPTH_INIT;
    }
 
    for (i = 0; i < gl->textures; i++)
@@ -1221,7 +1244,7 @@ static bool gl2_renderchain_init_hw_render(
 
          if (stencil)
          {
-#if defined(HAVE_OPENGLES2) || defined(HAVE_OPENGLES1) || ((defined(__MACH__) && (defined(__ppc__) || defined(__ppc64__))))
+#if defined(HAVE_OPENGLES2) || defined(HAVE_OPENGLES1) || (defined(__MACH__) && defined(MAC_OS_X_VERSION_MAX_ALLOWED) && (MAC_OS_X_VERSION_MAX_ALLOWED < 101200))
             /* GLES2 is a bit weird, as always.
              * There's no GL_DEPTH_STENCIL_ATTACHMENT like in desktop GL. */
             gl2_fb_rb(RARCH_GL_FRAMEBUFFER,
@@ -1425,7 +1448,7 @@ static void gl2_renderchain_copy_frame(
    }
 #elif defined(HAVE_OPENGLES)
 #if defined(HAVE_EGL)
-   if (chain->egl_images)
+   if (chain->flags & GL2_CHAIN_FLAG_EGL_IMAGES)
    {
       bool new_egl    = false;
       EGLImageKHR img = 0;
@@ -1618,7 +1641,7 @@ static void gl2_renderchain_init_texture_reference(
          gl->tex_w * gl->base_size,
          gl->tex_w * gl->tex_h * i * gl->base_size);
 #else
-   if (chain->egl_images)
+   if (chain->flags & GL2_CHAIN_FLAG_EGL_IMAGES)
       return;
 
    gl2_load_texture_image(GL_TEXTURE_2D,
@@ -1642,19 +1665,33 @@ static void gl2_renderchain_resolve_extensions(gl2_t *gl,
    if (!chain)
       return;
 
-   chain->has_srgb_fbo              = false;
-   chain->has_fp_fbo                = gl_check_capability(GL_CAPS_FP_FBO);
+   chain->flags    &= ~GL2_CHAIN_FLAG_HAS_SRGB_FBO;
+   if (gl_check_capability(GL_CAPS_FP_FBO))
+      chain->flags |=  GL2_CHAIN_FLAG_HAS_FP_FBO;
+   else
+      chain->flags &= ~GL2_CHAIN_FLAG_HAS_FP_FBO;
    /* GLES3 has unpack_subimage and sRGB in core. */
-   chain->has_srgb_fbo_gles3        = gl_check_capability(GL_CAPS_SRGB_FBO_ES3);
+   if (gl_check_capability(GL_CAPS_SRGB_FBO_ES3))
+      chain->flags |=  GL2_CHAIN_FLAG_HAS_SRGB_FBO_GLES3;
+   else
+      chain->flags &= ~GL2_CHAIN_FLAG_HAS_SRGB_FBO_GLES3;
 
    if (!force_srgb_disable)
-      chain->has_srgb_fbo           = gl_check_capability(GL_CAPS_SRGB_FBO);
+   {
+      if (gl_check_capability(GL_CAPS_SRGB_FBO))
+         chain->flags |=  GL2_CHAIN_FLAG_HAS_SRGB_FBO;
+      else
+         chain->flags &= ~GL2_CHAIN_FLAG_HAS_SRGB_FBO;
+   }
 
    /* Use regular textures if we use HW render. */
-   chain->egl_images                = !gl->hw_render_use 
+   if ( !gl->hw_render_use 
       && gl_check_capability(GL_CAPS_EGLIMAGE) 
       && gl->ctx_driver->image_buffer_init
-      && gl->ctx_driver->image_buffer_init(gl->ctx_data, video);
+      && gl->ctx_driver->image_buffer_init(gl->ctx_data, video))
+      chain->flags |=  GL2_CHAIN_FLAG_EGL_IMAGES;
+   else
+      chain->flags &= ~GL2_CHAIN_FLAG_EGL_IMAGES;
 }
 
 static void gl_load_texture_data(
@@ -1716,10 +1753,17 @@ static void gl_load_texture_data(
    glPixelStorei(GL_UNPACK_ALIGNMENT, alignment);
    glTexImage2D(GL_TEXTURE_2D,
          0,
-         (use_rgba || !rgb32) ? GL_RGBA : RARCH_GL_INTERNAL_FORMAT32,
+         (use_rgba || !rgb32) 
+         ? GL_RGBA 
+         : RARCH_GL_INTERNAL_FORMAT32,
          width, height, 0,
-         (use_rgba || !rgb32) ? GL_RGBA : RARCH_GL_TEXTURE_TYPE32,
-         (rgb32) ? RARCH_GL_FORMAT32 : GL_UNSIGNED_SHORT_4_4_4_4, frame);
+         (use_rgba || !rgb32) 
+         ? GL_RGBA 
+         : RARCH_GL_TEXTURE_TYPE32,
+         (rgb32) 
+         ? RARCH_GL_FORMAT32 
+         : GL_UNSIGNED_SHORT_4_4_4_4,
+         frame);
 
    if (want_mipmap && have_mipmap)
       glGenerateMipmap(GL_TEXTURE_2D);
@@ -2306,7 +2350,7 @@ static void gl2_render_osd_background(gl2_t *gl, const char *msg)
    settings_t *settings    = config_get_ptr();
    float video_font_size   = settings->floats.video_font_size;
    int msg_width           =
-      font_driver_get_message_width(NULL, msg, (unsigned)strlen(msg), 1.0f);
+      font_driver_get_message_width(NULL, msg, strlen(msg), 1.0f);
 
    /* shader driver expects vertex coords as 0..1 */
    float x                 = settings->floats.video_msg_pos_x;
@@ -2516,8 +2560,12 @@ static void gl2_video_layout_fbo_init(gl2_t *gl, unsigned width, unsigned height
    glGenTextures(1, &gl->video_layout_fbo_texture);
    glBindTexture(GL_TEXTURE_2D, gl->video_layout_fbo_texture);
 
-   gl2_load_texture_image(GL_TEXTURE_2D, 0, RARCH_GL_INTERNAL_FORMAT32,
-      width, height, 0, GL_RGBA, GL_FLOAT, NULL);
+   gl2_load_texture_image(GL_TEXTURE_2D,
+      0, RARCH_GL_INTERNAL_FORMAT32,
+      width,
+      height,
+      0, RARCH_GL_TEXTURE_TYPE32,
+      RARCH_GL_FORMAT32, NULL);
 
    gl2_gen_fb(1, &gl->video_layout_fbo);
    gl2_bind_fb(gl->video_layout_fbo);
@@ -3320,9 +3368,10 @@ static bool gl2_resolve_extensions(gl2_t *gl, const char *context_ident, const v
    if (gl->core_context_in_use)
    {
 #ifdef GL_NUM_EXTENSIONS
+      GLint i;
       GLint exts = 0;
       glGetIntegerv(GL_NUM_EXTENSIONS, &exts);
-      for (GLint i = 0; i < exts; i++)
+      for (i = 0; i < exts; i++)
       {
          const char *ext = (const char*)glGetStringi(GL_EXTENSIONS, i);
          if (ext)
@@ -3453,7 +3502,7 @@ static const gfx_ctx_driver_t *gl2_get_context(gl2_t *gl)
    gl->shared_context_use                = video_shared_context
       && hwr->context_type != RETRO_HW_CONTEXT_NONE;
 
-   if (     (libretro_get_shared_context())
+   if (     (runloop_get_flags() & RUNLOOP_FLAG_CORE_SET_SHARED_CONTEXT)
          && (hwr->context_type != RETRO_HW_CONTEXT_NONE))
       gl->shared_context_use = true;
 
@@ -3714,8 +3763,9 @@ static void *gl2_init(const video_info_t *video,
 
       if (!string_is_empty(vendor))
       {
-        strlcpy(device_str, vendor, sizeof(device_str));
-        strlcat(device_str, " ", sizeof(device_str));
+        size_t len        = strlcpy(device_str, vendor, sizeof(device_str));
+        device_str[len  ] = ' ';
+        device_str[len+1] = '\0';
       }
 
       if (!string_is_empty(renderer))
@@ -3735,6 +3785,10 @@ static void *gl2_init(const video_info_t *video,
 #else
          video_driver_force_fallback("gdi");
 #endif
+#endif
+#if defined(__APPLE__) && defined(__ppc__)
+   if (gl->version_major == 1)
+         video_driver_force_fallback("gl1");
 #endif
 
    hwr = video_driver_get_hw_context();
@@ -4010,9 +4064,9 @@ static bool gl2_alive(void *data)
 #ifdef __WINRT__
    if (is_running_on_xbox())
    {
-      //we can set it to 1920x1080 as xbox uwp windowsize is guaranteed to be 1920x1080 and currently there is now way to set angle to use a variable resolution swapchain so regardless of the size the window is always 1080p
-      temp_width = 1920;
-      temp_height = 1080;
+      //match the output res to the display res
+      temp_width = uwp_get_width();
+      temp_height = uwp_get_height();
    }
 #endif
    if (quit)

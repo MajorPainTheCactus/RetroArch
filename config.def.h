@@ -53,6 +53,11 @@
 #include "../input/input_overlay.h"
 #endif
 
+/* Required for Steam enum settings */
+#if defined(HAVE_MIST)
+#include "steam/steam.h"
+#endif
+
 #if defined(HW_RVL)
 #define MAX_GAMMA_SETTING 30
 #elif defined(GEKKO)
@@ -197,7 +202,7 @@
  * Real x resolution = aspect * base_size * x scale
  * Real y resolution = base_size * y scale
  */
-#define DEFAULT_SCALE (3.0)
+#define DEFAULT_SCALE 3
 
 /* Fullscreen */
 
@@ -218,6 +223,10 @@
 #else
 #define DEFAULT_WINDOWED_FULLSCREEN true 
 #endif 
+
+/* Enable automatic switching of the screen refresh rate when using the specified screen mode(s),
+ * based on running core/content */
+#define DEFAULT_AUTOSWITCH_REFRESH_RATE AUTOSWITCH_REFRESH_RATE_EXCLUSIVE_FULLSCREEN
 
 /* Which monitor to prefer. 0 is any monitor, 1 and up selects
  * specific monitors, 1 being the first monitor. */
@@ -326,8 +335,19 @@
 /* Video VSYNC (recommended) */
 #define DEFAULT_VSYNC true
 
+/* Vulkan specific */
 #define DEFAULT_MAX_SWAPCHAIN_IMAGES 3
 
+/* D3D1x specific */
+#if defined(__WINRT__) || defined(WINAPI_FAMILY) && WINAPI_FAMILY == WINAPI_FAMILY_PHONE_APP
+#define DEFAULT_WAITABLE_SWAPCHAINS false
+#else
+#define DEFAULT_WAITABLE_SWAPCHAINS true
+#endif
+#define DEFAULT_MAX_FRAME_LATENCY 1
+#define MAXIMUM_MAX_FRAME_LATENCY 4
+
+/* GL specific */
 #define DEFAULT_ADAPTIVE_VSYNC false
 
 /* Attempts to hard-synchronize CPU and GPU.
@@ -364,7 +384,7 @@
 /* Threaded video. Will possibly increase performance significantly
  * at the cost of worse synchronization and latency.
  */
-#if defined(HAVE_LIBNX) || defined(ANDROID)
+#if defined(HAVE_LIBNX)
 #define DEFAULT_VIDEO_THREADED true
 #else
 #define DEFAULT_VIDEO_THREADED false
@@ -492,6 +512,9 @@
 /* Save configuration file on exit. */
 #define DEFAULT_CONFIG_SAVE_ON_EXIT true
 
+/* Save active input remap file on exit/close content */
+#define DEFAULT_REMAP_SAVE_ON_EXIT true
+
 #define DEFAULT_SHOW_HIDDEN_FILES false
 
 /* Initialise file browser with the last used start directory */
@@ -555,9 +578,13 @@
 /* Ozone colour theme: 1 == Basic Black */
 #define DEFAULT_OZONE_COLOR_THEME 1
 #define DEFAULT_OZONE_COLLAPSE_SIDEBAR false
-#define DEFAULT_OZONE_TRUNCATE_PLAYLIST_NAME true
-#define DEFAULT_OZONE_SORT_AFTER_TRUNCATE_PLAYLIST_NAME true
 #define DEFAULT_OZONE_SCROLL_CONTENT_METADATA false
+#define DEFAULT_OZONE_THUMBNAIL_SCALE_FACTOR 1.0f
+#endif
+
+#if defined(HAVE_OZONE) || defined(HAVE_XMB)
+#define DEFAULT_OZONE_TRUNCATE_PLAYLIST_NAME true
+#define DEFAULT_OZONE_SORT_AFTER_TRUNCATE_PLAYLIST_NAME false
 #endif
 
 #define DEFAULT_SETTINGS_SHOW_DRIVERS true
@@ -604,6 +631,8 @@
 
 #define DEFAULT_SETTINGS_SHOW_DIRECTORY true
 
+#define DEFAULT_SETTINGS_SHOW_STEAM true
+
 #define DEFAULT_QUICK_MENU_SHOW_RESUME_CONTENT true
 
 #define DEFAULT_QUICK_MENU_SHOW_RESTART_CONTENT true
@@ -611,6 +640,8 @@
 #define DEFAULT_QUICK_MENU_SHOW_CLOSE_CONTENT true
 
 #define DEFAULT_QUICK_MENU_SHOW_TAKE_SCREENSHOT true
+
+#define DEFAULT_QUICK_MENU_SHOW_SAVESTATE_SUBMENU false
 
 #define DEFAULT_QUICK_MENU_SHOW_SAVE_LOAD_STATE true
 
@@ -666,10 +697,13 @@ static const bool menu_show_core_updater       = false;
 #else
 static const bool menu_show_core_updater       = true;
 #endif
+#ifdef HAVE_MIST
+static const bool menu_show_core_manager_steam = true;
+#endif
 static const bool menu_show_legacy_thumbnail_updater = false;
-static const bool menu_show_sublabels                = true;
-static const bool menu_dynamic_wallpaper_enable      = true;
-static const bool menu_scroll_fast                   = false;
+#define DEFAULT_MENU_SHOW_SUBLABELS true
+#define DEFAULT_MENU_DYNAMIC_WALLPAPER_ENABLE true
+#define DEFAULT_MENU_SCROLL_FAST false
 
 #define DEFAULT_MENU_SCROLL_DELAY 256
 
@@ -679,9 +713,9 @@ static const float menu_ticker_speed        = 2.0f;
 #define DEFAULT_MENU_TICKER_SMOOTH true
 
 #if defined(HAVE_THREADS)
-static const bool menu_savestate_resume     = true;
+#define DEFAULT_MENU_SAVESTATE_RESUME true
 #else
-static const bool menu_savestate_resume     = false;
+#define DEFAULT_MENU_SAVESTATE_RESUME false
 #endif
 
 #define DEFAULT_MENU_INSERT_DISK_RESUME true
@@ -730,10 +764,15 @@ static const bool content_show_playlists    = true;
 #if defined(HAVE_LIBRETRODB)
 #define DEFAULT_MENU_CONTENT_SHOW_EXPLORE true
 #endif
+#define DEFAULT_MENU_CONTENT_SHOW_CONTENTLESS_CORES MENU_CONTENTLESS_CORES_DISPLAY_SINGLE_PURPOSE
 
 #ifdef HAVE_XMB
-#define DEFAULT_XMB_ANIMATION 0
-#define DEFAULT_XMB_VERTICAL_FADE_FACTOR 100
+#define DEFAULT_XMB_ANIMATION                      0
+#define DEFAULT_XMB_VERTICAL_FADE_FACTOR           100
+#define DEFAULT_XMB_SHOW_TITLE_HEADER              true
+#define DEFAULT_XMB_TITLE_MARGIN                   5
+#define DEFAULT_XMB_TITLE_MARGIN_HORIZONTAL_OFFSET 0
+#define MAXIMUM_XMB_TITLE_MARGIN                   12
 
 static const unsigned xmb_alpha_factor      = 75;
 static const unsigned menu_font_color_red   = 255;
@@ -762,30 +801,30 @@ static const float menu_footer_opacity = 1.000;
 
 static const float menu_header_opacity = 1.000;
 
-#if defined(HAVE_OPENGLES2) || (defined(__MACH__) && (defined(__ppc__) || defined(__ppc64__)))
+#if defined(HAVE_OPENGLES2) || (defined(__MACH__)  && defined(MAC_OS_X_VERSION_MAX_ALLOWED) && (MAC_OS_X_VERSION_MAX_ALLOWED < 101200))
 #define DEFAULT_MENU_SHADER_PIPELINE 1
 #else
 #define DEFAULT_MENU_SHADER_PIPELINE 2
 #endif
 
-#define DEFAULT_SHOW_ADVANCED_SETTINGS false
+#define DEFAULT_SHOW_ADVANCED_SETTINGS true
 
 #define DEFAULT_RGUI_COLOR_THEME RGUI_THEME_CLASSIC_GREEN
 #define DEFAULT_RGUI_TRANSPARENCY true
 
-static const bool rgui_inline_thumbnails = false;
-static const bool rgui_swap_thumbnails = false;
+#define DEFAULT_RGUI_INLINE_THUMBNAILS false
+#define DEFAULT_RGUI_SWAP_THUMBNAILS false
 static const unsigned rgui_thumbnail_downscaler = RGUI_THUMB_SCALE_POINT;
 static const unsigned rgui_thumbnail_delay = 0;
 static const unsigned rgui_internal_upscale_level = RGUI_UPSCALE_NONE;
 static const bool rgui_full_width_layout = true;
 static const unsigned rgui_aspect = RGUI_ASPECT_RATIO_4_3;
 static const unsigned rgui_aspect_lock = RGUI_ASPECT_RATIO_LOCK_NONE;
-static const bool rgui_shadows = false;
-static const unsigned rgui_particle_effect = RGUI_PARTICLE_EFFECT_NONE;
+#define DEFAULT_RGUI_SHADOWS false
+#define DEFAULT_RGUI_PARTICLE_EFFECT RGUI_PARTICLE_EFFECT_NONE
 #define DEFAULT_RGUI_PARTICLE_EFFECT_SPEED 1.0f
 #define DEFAULT_RGUI_PARTICLE_EFFECT_SCREENSAVER true
-static const bool rgui_extended_ascii = false;
+#define DEFAULT_RGUI_EXTENDED_ASCII false
 #define DEFAULT_RGUI_SWITCH_ICONS true
 #endif
 
@@ -850,11 +889,15 @@ static const unsigned input_backtouch_toggle       = false;
 
 #define DEFAULT_OVERLAY_SHOW_INPUTS_PORT 0
 
-#if defined(ANDROID) || defined(_WIN32)
+#define DEFAULT_OVERLAY_DPAD_DIAGONAL_SENSITIVITY 80
+#define DEFAULT_OVERLAY_ABXY_DIAGONAL_SENSITIVITY 50
+
+#if defined(ANDROID) || defined(_WIN32) || defined(HAVE_STEAM)
 #define DEFAULT_MENU_SWAP_OK_CANCEL_BUTTONS true
 #else
 #define DEFAULT_MENU_SWAP_OK_CANCEL_BUTTONS false
 #endif
+#define DEFAULT_MENU_SWAP_SCROLL_BUTTONS false
 
 #if defined(WIIU)
 #define DEFAULT_ALL_USERS_CONTROL_MENU true
@@ -883,18 +926,18 @@ static const unsigned input_backtouch_toggle       = false;
 
 /* Offset for where messages will be placed on-screen.
  * Values are in range [0.0, 1.0]. */
-static const float message_pos_offset_x = 0.05;
-static const float message_pos_offset_y = 0.05;
+#define DEFAULT_MESSAGE_POS_OFFSET_X 0.05f
+#define DEFAULT_MESSAGE_POS_OFFSET_Y 0.05f
 
 /* Color of the message.
  * RGB hex value. */
-static const uint32_t message_color = 0xffff00;
+#define DEFAULT_MESSAGE_COLOR 0xffff00
 
-static const bool message_bgcolor_enable = false;
-static const uint32_t message_bgcolor_red = 0;
-static const uint32_t message_bgcolor_green = 0;
-static const uint32_t message_bgcolor_blue = 0;
-static const float message_bgcolor_opacity = 1.0f;
+#define DEFAULT_MESSAGE_BGCOLOR_ENABLE false
+#define DEFAULT_MESSAGE_BGCOLOR_RED 0
+#define DEFAULT_MESSAGE_BGCOLOR_GREEN 0
+#define DEFAULT_MESSAGE_BGCOLOR_BLUE 0
+#define DEFAULT_MESSAGE_BGCOLOR_OPACITY 1.0f
 
 /* Record post-filtered (CPU filter) video,
  * rather than raw game output. */
@@ -943,11 +986,23 @@ static const float message_bgcolor_opacity = 1.0f;
  * Used for setups where one manually rotates the monitor. */
 #define DEFAULT_ALLOW_ROTATE true
 
-#if defined(_3DS)
+#ifdef _3DS
+/* Enable New3DS clock and L2 cache */
+static const bool new3ds_speedup_enable      = true;
 /* Enable bottom LCD screen */
-static const bool video_3ds_lcd_bottom = true;
+static const bool video_3ds_lcd_bottom       = true;
 /* Sets video display mode (3D, 2D, etc.) */
 static const unsigned video_3ds_display_mode = CTR_VIDEO_MODE_3D;
+
+#define DEFAULT_BOTTOM_FONT_ENABLE true
+#define DEFAULT_BOTTOM_FONT_COLOR 255
+#define DEFAULT_BOTTOM_FONT_SCALE 1.48
+#endif
+
+#ifdef WIIU
+/* On Wii U, whether to optimize for the native TV resolution
+ * or exactly 2x the Wii U GamePad resolution. */
+#define DEFAULT_WIIU_PREFER_DRC false
 #endif
 
 /* AUDIO */
@@ -1037,9 +1092,9 @@ static const bool audio_enable_menu_bgm    = false;
 #endif
 
 /* Output samplerate. */
-#ifdef GEKKO
+#if defined(GEKKO) || defined(MIYOO)
 #define DEFAULT_OUTPUT_RATE 32000
-#elif defined(_3DS) || defined(RETROFW) || defined(MIYOO)
+#elif defined(_3DS) || defined(RETROFW)
 #define DEFAULT_OUTPUT_RATE 32730
 #else
 #define DEFAULT_OUTPUT_RATE 48000
@@ -1143,12 +1198,16 @@ static const bool audio_enable_menu_bgm    = false;
 /* How many frames to rewind at a time. */
 #define DEFAULT_REWIND_GRANULARITY 1
 #endif
-/* Pause gameplay when gameplay loses focus. */
-#if defined(EMSCRIPTEN) || defined(WEBOS)
+
+/* Pause gameplay when window loses focus. */
+#if defined(EMSCRIPTEN)
 #define DEFAULT_PAUSE_NONACTIVE false
 #else
 #define DEFAULT_PAUSE_NONACTIVE true
 #endif
+
+/* Pause gameplay when controller disconnects. */
+#define DEFAULT_PAUSE_ON_DISCONNECT false
 
 /* Saves non-volatile SRAM at a regular interval.
  * It is measured in seconds. A value of 0 disables autosave. */
@@ -1160,8 +1219,10 @@ static const bool audio_enable_menu_bgm    = false;
 #define DEFAULT_AUTOSAVE_INTERVAL 0
 #endif
 
-/* Show only connectable rooms */
-#define DEFAULT_NETPLAY_SHOW_ONLY_CONNECTABLE true
+/* Netplay lobby filters */
+#define DEFAULT_NETPLAY_SHOW_ONLY_CONNECTABLE     true
+#define DEFAULT_NETPLAY_SHOW_ONLY_INSTALLED_CORES false
+#define DEFAULT_NETPLAY_SHOW_PASSWORDED           true
 
 /* Publicly announce netplay */
 #define DEFAULT_NETPLAY_PUBLIC_ANNOUNCE true
@@ -1172,6 +1233,10 @@ static const bool netplay_start_as_spectator = false;
 /* Netplay chat fading toggle */
 static const bool netplay_fade_chat = true;
 
+/* Netplay chat colors */
+static const unsigned netplay_chat_color_name = 0x008000;
+static const unsigned netplay_chat_color_msg  = 0xFFFFFF;
+
 /* Allow players to pause */
 static const bool netplay_allow_pausing = false;
 
@@ -1180,9 +1245,6 @@ static const bool netplay_allow_slaves = true;
 
 /* Require connections only in slave mode */
 static const bool netplay_require_slaves = false;
-
-/* Netplay without savestates/rewind */
-static const bool netplay_stateless_mode = false;
 
 /* When being client over netplay, use keybinds for
  * user 1 rather than user 2. */
@@ -1202,8 +1264,8 @@ static const bool netplay_use_mitm_server = false;
 static const unsigned netplay_max_connections = 3;
 static const unsigned netplay_max_ping        = 0;
 
-static const unsigned netplay_share_digital = RARCH_NETPLAY_SHARE_DIGITAL_NO_PREFERENCE;
-static const unsigned netplay_share_analog  = RARCH_NETPLAY_SHARE_ANALOG_NO_PREFERENCE;
+static const unsigned netplay_share_digital = RARCH_NETPLAY_SHARE_DIGITAL_NO_SHARING;
+static const unsigned netplay_share_analog  = RARCH_NETPLAY_SHARE_ANALOG_NO_SHARING;
 #endif
 
 /* On save state load, block SRAM from being overwritten.
@@ -1214,7 +1276,7 @@ static const unsigned netplay_share_analog  = RARCH_NETPLAY_SHARE_ANALOG_NO_PREF
  * incremented before saving.
  * When the content is loaded, state index will be set
  * to the highest existing value. */
-static const bool savestate_auto_index = false;
+#define DEFAULT_SAVESTATE_AUTO_INDEX false
 
 /* Specifies the maximum number of savestates to keep
  * when savestate auto index is enabled
@@ -1229,10 +1291,10 @@ static const bool savestate_auto_index = false;
  * The path is $SRAM_PATH.auto.
  * RetroArch will automatically load any savestate with this path on
  * startup if savestate_auto_load is set. */
-static const bool savestate_auto_save = false;
-static const bool savestate_auto_load = false;
+#define DEFAULT_SAVESTATE_AUTO_SAVE false
+#define DEFAULT_SAVESTATE_AUTO_LOAD false
 
-static const bool savestate_thumbnail_enable = false;
+#define DEFAULT_SAVESTATE_THUMBNAIL_ENABLE false
 
 /* When creating save (srm) files, compress
  * written data */
@@ -1240,8 +1302,7 @@ static const bool savestate_thumbnail_enable = false;
 
 /* When creating save state files, compress
  * written data */
-#if defined(__WINRT__) || defined(WINAPI_FAMILY) && WINAPI_FAMILY == WINAPI_FAMILY_PHONE_APP
-/* TODO/FIXME Apparently this is an issue on UWP for now, so disable it for now */
+#if defined(WINAPI_FAMILY) && WINAPI_FAMILY == WINAPI_FAMILY_PHONE_APP
 #define DEFAULT_SAVESTATE_FILE_COMPRESSION false
 #else
 #define DEFAULT_SAVESTATE_FILE_COMPRESSION true
@@ -1252,6 +1313,10 @@ static const bool savestate_thumbnail_enable = false;
 
 /* Maximum fast forward ratio. */
 #define DEFAULT_FASTFORWARD_RATIO 0.0
+#define MAXIMUM_FASTFORWARD_RATIO 50.0
+
+/* Skip frames when fast forwarding. */
+#define DEFAULT_FASTFORWARD_FRAMESKIP true
 
 /* Enable runloop for variable refresh rate screens. Force x1 speed while handling fast forward too. */
 #define DEFAULT_VRR_RUNLOOP_ENABLE false
@@ -1266,11 +1331,10 @@ static const bool savestate_thumbnail_enable = false;
 #define DEFAULT_RUN_AHEAD_HIDE_WARNINGS false
 
 /* Enable stdin/network command interface. */
-static const bool network_cmd_enable = false;
-static const uint16_t network_cmd_port = 55355;
-static const bool stdin_cmd_enable = false;
-
-static const uint16_t network_remote_base_port = 55400;
+#define DEFAULT_NETWORK_CMD_ENABLE false
+#define DEFAULT_NETWORK_CMD_PORT 55355
+#define DEFAULT_NETWORK_REMOTE_BASE_PORT 55400
+#define DEFAULT_STDIN_CMD_ENABLE false
 
 #define DEFAULT_NETWORK_BUILDBOT_AUTO_EXTRACT_ARCHIVE true
 #define DEFAULT_NETWORK_BUILDBOT_SHOW_EXPERIMENTAL_CORES false
@@ -1296,11 +1360,11 @@ static const uint16_t network_remote_base_port = 55400;
 #endif
 
 /* Number of entries that will be kept in content history playlist file. */
-static const unsigned default_content_history_size = 200;
+#define DEFAULT_CONTENT_HISTORY_SIZE 200
 
 /* Number of entries that will be kept in content favorites playlist file.
  * -1 == 'unlimited' (99999) */
-static const int default_content_favorites_size = 200;
+#define DEFAULT_CONTENT_FAVORITES_SIZE 200
 
 /* Sort all playlists (apart from histories) alphabetically */
 #define DEFAULT_PLAYLIST_SORT_ALPHABETICAL true
@@ -1371,7 +1435,11 @@ static const int default_content_favorites_size = 200;
 #define DEFAULT_LIBRETRO_LOG_LEVEL 1
 
 #ifndef RARCH_DEFAULT_PORT
+#ifndef VITA
 #define RARCH_DEFAULT_PORT 55435
+#else
+#define RARCH_DEFAULT_PORT 19492
+#endif
 #endif
 
 #ifndef RARCH_STREAM_DEFAULT_PORT
@@ -1383,20 +1451,18 @@ static const int default_content_favorites_size = 200;
 /* Axis threshold (between 0.0 and 1.0)
  * How far an axis must be tilted to result in a button press. */
 #define DEFAULT_AXIS_THRESHOLD 0.5f
-
 #define DEFAULT_ANALOG_DEADZONE 0.0f
-
 #define DEFAULT_ANALOG_SENSITIVITY 1.0f
 
 /* Describes speed of which turbo-enabled buttons toggle. */
-static const unsigned turbo_period        = 6;
-static const unsigned turbo_duty_cycle    = 3;
-static const unsigned turbo_mode          = 0;
-static const unsigned turbo_default_btn   = RETRO_DEVICE_ID_JOYPAD_B;
+#define DEFAULT_TURBO_PERIOD 6
+#define DEFAULT_TURBO_DUTY_CYCLE 3
+#define DEFAULT_TURBO_MODE 0
+#define DEFAULT_TURBO_DEFAULT_BTN RETRO_DEVICE_ID_JOYPAD_B
 
 /* Enable input auto-detection. Will attempt to autoconfigure
  * gamepads, plug-and-play style. */
-static const bool input_autodetect_enable = true;
+#define DEFAULT_INPUT_AUTODETECT_ENABLE true
 
 /* Enables accelerometer/gyroscope/illuminance
  * sensor input, if supported */
@@ -1414,22 +1480,18 @@ static const bool input_autodetect_enable = true;
 
 /* Show the input descriptors set by the core instead
  * of the default ones. */
-static const bool input_descriptor_label_show = true;
-
-static const bool input_descriptor_hide_unbound = false;
+#define DEFAULT_INPUT_DESCRIPTOR_LABEL_SHOW true
+#define DEFAULT_INPUT_DESCRIPTOR_HIDE_UNBOUND false
 
 #if defined(DINGUX)
-static const unsigned input_max_users = 1;
+#define DEFAULT_INPUT_MAX_USERS 1
 #else
-static const unsigned input_max_users = 5;
+#define DEFAULT_INPUT_MAX_USERS 5
 #endif
 
-static const unsigned input_poll_type_behavior = 2;
-
-static const unsigned input_bind_timeout = 5;
-
-static const unsigned input_bind_hold = 2;
-
+#define DEFAULT_INPUT_BIND_TIMEOUT 5
+#define DEFAULT_INPUT_BIND_HOLD 2
+#define DEFAULT_INPUT_POLL_TYPE_BEHAVIOR 2
 #define DEFAULT_INPUT_HOTKEY_BLOCK_DELAY 5
 
 static const unsigned gfx_thumbnails_default = 3;
@@ -1449,22 +1511,22 @@ static const unsigned gfx_thumbnail_upscale_threshold = 0;
 #endif
 #define DEFAULT_MENU_TIMEDATE_STYLE          MENU_TIMEDATE_STYLE_DDMM_HM
 #define DEFAULT_MENU_TIMEDATE_DATE_SEPARATOR MENU_TIMEDATE_DATE_SEPARATOR_HYPHEN
+#define DEFAULT_MENU_REMEMBER_SELECTION      MENU_REMEMBER_SELECTION_ALWAYS
 #endif
 
-static const bool xmb_vertical_thumbnails = false;
+#define DEFAULT_XMB_VERTICAL_THUMBNAILS false
 
-static const unsigned xmb_thumbnail_scale_factor = 100;
+#define DEFAULT_XMB_THUMBNAIL_SCALE_FACTOR 100
 
 #ifdef IOS
-static const bool ui_companion_start_on_boot = false;
+#define DEFAULT_UI_COMPANION_START_ON_BOOT false
 #else
-static const bool ui_companion_start_on_boot = true;
+#define DEFAULT_UI_COMPANION_START_ON_BOOT true
 #endif
 
-static const bool ui_companion_enable = false;
-
+#define DEFAULT_UI_COMPANION_ENABLE false
 /* Currently only used to show the WIMP UI on startup */
-static const bool ui_companion_toggle = false;
+#define DEFAULT_UI_COMPANION_TOGGLE false
 
 /* Only init the WIMP UI for this session if this is enabled */
 #define DEFAULT_DESKTOP_MENU_ENABLE true
@@ -1495,16 +1557,24 @@ static const enum resampler_quality audio_resampler_quality_level = RESAMPLER_QU
 
 /* MIDI */
 #define DEFAULT_MIDI_INPUT  "Off"
-
 #define DEFAULT_MIDI_OUTPUT "Off"
+#define DEFAULT_MIDI_VOLUME 100
 
-static const unsigned midi_volume = 100;
+#ifdef HAVE_MIST
+/* Steam */
+#define DEFAULT_STEAM_RICH_PRESENCE_FORMAT STEAM_RICH_PRESENCE_FORMAT_CONTENT_SYSTEM
+#endif
 
 /* Only applies to Android 7.0 (API 24) and up */
-static const bool sustained_performance_mode = false;
+#define DEFAULT_SUSTAINED_PERFORMANCE_MODE false
 
-static const bool vibrate_on_keypress        = false;
-static const bool enable_device_vibration    = false;
+#if defined(ANDROID)
+#define DEFAULT_VIBRATE_ON_KEYPRESS true
+#else
+#define DEFAULT_VIBRATE_ON_KEYPRESS false
+#endif
+
+#define DEFAULT_ENABLE_DEVICE_VIBRATION false
 
 /* Defines the strength of rumble effects
  * on OpenDingux devices */
@@ -1564,7 +1634,7 @@ static const bool enable_device_vibration    = false;
 #if _MSC_VER >= 1910
 #ifndef __WINRT__
 #if defined(__x86_64__) || defined(_M_X64)
-#define DEFAULT_BUILDBOT_SERVER_URL "http://buildbot.libretro.com/nightly/windows-msvc2017-desktop/x64/latest/"
+#define DEFAULT_BUILDBOT_SERVER_URL "http://buildbot.libretro.com/nightly/windows/x86_64/latest/"
 #elif defined(__i386__) || defined(__i486__) || defined(__i686__) || defined(_M_IX86) || defined(_M_IA64)
 #define DEFAULT_BUILDBOT_SERVER_URL "http://buildbot.libretro.com/nightly/windows-msvc2017-desktop/x86/latest/"
 #elif defined(__arm__) || defined(_M_ARM)
@@ -1574,9 +1644,9 @@ static const bool enable_device_vibration    = false;
 #endif
 #else
 #if defined(__x86_64__) || defined(_M_X64)
-#define DEFAULT_BUILDBOT_SERVER_URL "http://buildbot.libretro.com/nightly/windows-msvc2017-uwp/x64/latest/"
+#define DEFAULT_BUILDBOT_SERVER_URL "http://buildbot.libretro.com/nightly/windows/x86_64/latest/"
 #elif defined(__i386__) || defined(__i486__) || defined(__i686__) || defined(_M_IX86) || defined(_M_IA64)
-#define DEFAULT_BUILDBOT_SERVER_URL "http://buildbot.libretro.com/nightly/windows-msvc2017-uwp/x86/latest/"
+#define DEFAULT_BUILDBOT_SERVER_URL "http://buildbot.libretro.com/nightly/windows/x86/latest/"
 #elif defined(__arm__) || defined(_M_ARM)
 #define DEFAULT_BUILDBOT_SERVER_URL "http://buildbot.libretro.com/nightly/windows-msvc2017-uwp/arm/latest/"
 #elif defined(__aarch64__) || defined(_M_ARM64)
@@ -1628,7 +1698,7 @@ static const bool enable_device_vibration    = false;
 
 #define DEFAULT_AI_SERVICE_TARGET_LANG 0
 
-#define DEFAULT_AI_SERVICE_ENABLE true
+#define DEFAULT_AI_SERVICE_ENABLE false
 
 #define DEFAULT_AI_SERVICE_PAUSE false
 

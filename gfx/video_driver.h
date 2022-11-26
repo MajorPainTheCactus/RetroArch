@@ -85,7 +85,8 @@
 #define MAX_VARIABLES 64
 
 #ifdef HAVE_THREADS
-#define VIDEO_DRIVER_IS_THREADED_INTERNAL(video_st) ((!video_driver_is_hw_context() && video_st->threaded) ? true : false)
+#define VIDEO_DRIVER_IS_THREADED_INTERNAL(video_st) ((!video_driver_is_hw_context() && (((video_st->threaded)) ? true : false)))
+
 #define VIDEO_DRIVER_LOCK(video_st) \
    if (video_st->display_lock) \
       slock_lock(video_st->display_lock)
@@ -134,12 +135,46 @@
 
 RETRO_BEGIN_DECLS
 
+enum video_driver_state_flags
+{
+   VIDEO_FLAG_DEFERRED_VIDEO_CTX_DRIVER_SET_FLAGS = (1 << 0 ),
+   VIDEO_FLAG_WINDOW_TITLE_UPDATE                 = (1 << 1 ),
+   VIDEO_FLAG_WIDGETS_PAUSED                      = (1 << 2 ),
+   VIDEO_FLAG_WIDGETS_FAST_FORWARD                = (1 << 3 ),
+   VIDEO_FLAG_WIDGETS_REWINDING                   = (1 << 4 ),
+   VIDEO_FLAG_STARTED_FULLSCREEN                  = (1 << 5 ),
+   /* Graphics driver requires RGBA byte order data (ABGR on little-endian)
+    * for 32-bit.
+    * This takes effect for overlay and shader cores that wants to load
+    * data into graphics driver. Kinda hackish to place it here, it is only
+    * used for GLES.
+    * TODO: Refactor this better. */
+   VIDEO_FLAG_USE_RGBA                            = (1 << 6 ),
+   /* Graphics driver supports HDR displays
+    * Currently only D3D11/D3D12/Vulkan supports HDR displays
+    * on Windows and whether we've enabled it */
+   VIDEO_FLAG_HDR_SUPPORT                         = (1 << 7 ),
+   /* If set during context deinit, the driver should keep
+    * graphics context alive to avoid having to reset all
+    * context state. */
+   VIDEO_FLAG_CACHE_CONTEXT                       = (1 << 8 ),
+   /* Set to true by driver if context caching succeeded. */
+   VIDEO_FLAG_CACHE_CONTEXT_ACK                   = (1 << 9 ),
+   VIDEO_FLAG_ACTIVE                              = (1 << 10),
+   VIDEO_FLAG_STATE_OUT_RGB32                     = (1 << 11),
+   VIDEO_FLAG_CRT_SWITCHING_ACTIVE                = (1 << 12),
+   VIDEO_FLAG_FORCE_FULLSCREEN                    = (1 << 13),
+   VIDEO_FLAG_IS_SWITCHING_DISPLAY_MODE           = (1 << 14),
+   VIDEO_FLAG_SHADER_PRESETS_NEED_RELOAD          = (1 << 15),
+   VIDEO_FLAG_CLI_SHADER_DISABLE                  = (1 << 16),
+   VIDEO_FLAG_RUNAHEAD_IS_ACTIVE                  = (1 << 17)
+};
+
 struct LinkInfo
 {
    struct video_shader_pass *pass;
    unsigned tex_w, tex_h;
 };
-
 
 struct shader_program_info
 {
@@ -436,6 +471,7 @@ typedef struct video_frame_info
    unsigned black_frame_insertion;
    unsigned fps_update_interval;
    unsigned memory_update_interval;
+   unsigned msg_queue_delay;
 
    float menu_wallpaper_opacity;
    float menu_framebuffer_opacity;
@@ -497,6 +533,7 @@ typedef struct video_frame_info
    bool timedate_enable;
    bool runloop_is_slowmotion;
    bool runloop_is_paused;
+   bool fastforward_frameskip;
    bool menu_is_alive;
    bool menu_screensaver_active;
    bool msg_bgcolor_enable;
@@ -819,6 +856,7 @@ typedef struct
 #endif
    struct retro_system_av_info av_info; /* double alignment */
    retro_time_t frame_time_samples[MEASURE_FRAME_TIME_SAMPLES_COUNT];
+   retro_time_t core_frame_time;
    uint64_t frame_time_count;
    uint64_t frame_count;
    uint8_t *record_gpu_buffer;
@@ -866,6 +904,9 @@ typedef struct
    uintptr_t window;
 
    size_t frame_cache_pitch;
+   size_t window_title_len;
+
+   uint32_t flags;
 
 #ifdef HAVE_VIDEO_FILTER
    unsigned state_scale;
@@ -905,59 +946,7 @@ typedef struct
    char title_buf[64];
    char cached_driver_id[32];
 
-   /**
-    * dynamic.c:dynamic_request_hw_context will try to set
-    * flag data when the context
-    * is in the middle of being rebuilt; in these cases we will save flag
-    * data and set this to true.
-    * When the context is reinit, it checks this, reads from
-    * deferred_flag_data and cleans it.
-    *
-    * TODO - Dirty hack, fix it better
-    */
-   bool deferred_video_context_driver_set_flags;
-   bool window_title_update;
-#ifdef HAVE_GFX_WIDGETS
-   bool widgets_paused;
-   bool widgets_fast_forward;
-   bool widgets_rewinding;
-#endif
-   bool started_fullscreen;
-
-   /* Graphics driver requires RGBA byte order data (ABGR on little-endian)
-    * for 32-bit.
-    * This takes effect for overlay and shader cores that wants to load
-    * data into graphics driver. Kinda hackish to place it here, it is only
-    * used for GLES.
-    * TODO: Refactor this better. */
-   bool use_rgba;
-
-   /* Graphics driver supports HDR displays
-    * Currently only D3D11/D3D12 supports HDR displays and 
-    * whether we've enabled it */
-   bool hdr_support;
-
-   /* If set during context deinit, the driver should keep
-    * graphics context alive to avoid having to reset all
-    * context state. */
-   bool cache_context;
-
-   /* Set to true by driver if context caching succeeded. */
-   bool cache_context_ack;
-
-   bool active;
-#ifdef HAVE_VIDEO_FILTER
-   bool state_out_rgb32;
-#endif
-   bool crt_switching_active;
-   bool force_fullscreen;
    bool threaded;
-   bool is_switching_display_mode;
-   bool shader_presets_need_reload;
-   bool cli_shader_disable;
-#ifdef HAVE_RUNAHEAD
-   bool runahead_is_active;
-#endif
 } video_driver_state_t;
 
 typedef struct video_frame_delay_auto {
@@ -1038,10 +1027,6 @@ struct retro_hw_render_callback *video_driver_get_hw_context(void);
 
 const struct retro_hw_render_context_negotiation_interface
 *video_driver_get_context_negotiation_interface(void);
-
-bool video_driver_is_video_cache_context(void);
-
-void video_driver_set_video_cache_context_ack(void);
 
 bool video_driver_get_viewport_info(struct video_viewport *viewport);
 
@@ -1175,6 +1160,7 @@ bool video_driver_monitor_adjust_system_rates(
       float video_refresh_rate,
       bool vrr_runloop_enable,
       float audio_max_timing_skew,
+      unsigned video_swap_interval,
       double input_fps);
 
 void crt_switch_driver_refresh(void);
@@ -1231,7 +1217,7 @@ void video_driver_build_info(video_frame_info_t *video_info);
 
 void video_driver_reinit(int flags);
 
-void video_driver_get_window_title(char *buf, unsigned len);
+size_t video_driver_get_window_title(char *buf, unsigned len);
 
 bool *video_driver_get_threaded(void);
 
@@ -1409,6 +1395,8 @@ void video_driver_set_viewport_config(
 
 void video_driver_set_viewport_square_pixel(struct retro_game_geometry *geom);
 
+uint32_t video_driver_get_st_flags(void);
+
 bool video_driver_init_internal(bool *video_is_threaded, bool verbosity_enabled);
 
 /**
@@ -1437,7 +1425,8 @@ extern video_driver_t video_ctr;
 extern video_driver_t video_gcm;
 extern video_driver_t video_switch;
 extern video_driver_t video_d3d8;
-extern video_driver_t video_d3d9;
+extern video_driver_t video_d3d9_cg;
+extern video_driver_t video_d3d9_hlsl;
 extern video_driver_t video_d3d10;
 extern video_driver_t video_d3d11;
 extern video_driver_t video_d3d12;

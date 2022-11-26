@@ -88,7 +88,7 @@ RETRO_BEGIN_DECLS
 bool retroarch_ctl(enum rarch_ctl_state state, void *data);
 
 int retroarch_get_capabilities(enum rarch_capabilities type,
-      char *s, size_t len);
+      char *s, size_t len, size_t _len);
 
 void retroarch_override_setting_set(enum rarch_override_setting enum_idx, void *data);
 
@@ -105,7 +105,7 @@ const char* retroarch_get_shader_preset(void);
  *
  * Initializes the program.
  *
- * Returns: 1 (true) on success, otherwise false (0) if there was an error.
+ * @return true on success, otherwise false if there was an error.
  **/
 bool retroarch_main_init(int argc, char *argv[]);
 
@@ -141,10 +141,6 @@ void rarch_favorites_deinit(void);
  * Returns: string listing of all audio driver names, separated by '|'.
  **/
 const char* config_get_audio_driver_options(void);
-
-/* BSV Movie */
-
-void bsv_movie_frame_rewind(void);
 
 /* Camera */
 
@@ -195,6 +191,24 @@ typedef enum apple_view_type
    APPLE_VIEW_TYPE_METAL
 } apple_view_type_t;
 
+enum rarch_state_flags
+{
+   RARCH_FLAGS_HAS_SET_USERNAME             = (1 << 0),
+   RARCH_FLAGS_HAS_SET_VERBOSITY            = (1 << 1),
+   RARCH_FLAGS_HAS_SET_LIBRETRO             = (1 << 2),
+   RARCH_FLAGS_HAS_SET_LIBRETRO_DIRECTORY   = (1 << 3),
+   RARCH_FLAGS_HAS_SET_SAVE_PATH            = (1 << 4),
+   RARCH_FLAGS_HAS_SET_STATE_PATH           = (1 << 5),
+   RARCH_FLAGS_HAS_SET_UPS_PREF             = (1 << 6),
+   RARCH_FLAGS_HAS_SET_BPS_PREF             = (1 << 7),
+   RARCH_FLAGS_HAS_SET_IPS_PREF             = (1 << 8),
+   RARCH_FLAGS_HAS_SET_LOG_TO_FILE          = (1 << 9),
+   RARCH_FLAGS_UPS_PREF                     = (1 << 10),
+   RARCH_FLAGS_BPS_PREF                     = (1 << 11),
+   RARCH_FLAGS_IPS_PREF                     = (1 << 12),
+   RARCH_FLAGS_BLOCK_CONFIG_READ            = (1 << 13)
+};
+
 bool retroarch_get_current_savestate_path(char *path, size_t len);
 
 bool retroarch_get_entry_state_path(char *path, size_t len, unsigned slot);
@@ -207,6 +221,8 @@ bool retroarch_get_entry_state_path(char *path, size_t len, unsigned slot);
  * Sanely kills the program.
  **/
 void retroarch_fail(int error_code, const char *error);
+
+uint16_t retroarch_get_flags(void);
 
 RETRO_END_DECLS
 

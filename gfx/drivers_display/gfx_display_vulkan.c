@@ -22,7 +22,6 @@
 
 #include "../gfx_display.h"
 
-#include "../font_driver.h"
 #include "../../retroarch.h"
 #include "../common/vulkan_common.h"
 
@@ -73,15 +72,15 @@ static unsigned to_menu_pipeline(
    switch (pipeline)
    {
       case VIDEO_SHADER_MENU:
-         return 4 + (type == GFX_DISPLAY_PRIM_TRIANGLESTRIP);
-      case VIDEO_SHADER_MENU_2:
          return 6 + (type == GFX_DISPLAY_PRIM_TRIANGLESTRIP);
-      case VIDEO_SHADER_MENU_3:
+      case VIDEO_SHADER_MENU_2:
          return 8 + (type == GFX_DISPLAY_PRIM_TRIANGLESTRIP);
-      case VIDEO_SHADER_MENU_4:
+      case VIDEO_SHADER_MENU_3:
          return 10 + (type == GFX_DISPLAY_PRIM_TRIANGLESTRIP);
-      case VIDEO_SHADER_MENU_5:
+      case VIDEO_SHADER_MENU_4:
          return 12 + (type == GFX_DISPLAY_PRIM_TRIANGLESTRIP);
+      case VIDEO_SHADER_MENU_5:
+         return 14 + (type == GFX_DISPLAY_PRIM_TRIANGLESTRIP);
       default:
          break;
    }
@@ -250,14 +249,14 @@ static void gfx_display_vk_draw(gfx_display_ctx_draw_t *draw,
          {
             struct vk_draw_triangles call;
             unsigned 
-               disp_pipeline  = ((draw->prim_type == 
-                        GFX_DISPLAY_PRIM_TRIANGLESTRIP) << 1) | 
-               (vk->display.blend << 0);
+               disp_pipeline  = 
+                 ((draw->prim_type == GFX_DISPLAY_PRIM_TRIANGLESTRIP) << 1)
+               | (((vk->flags & VK_FLAG_DISPLAY_BLEND) > 0) << 0);
             call.pipeline     = vk->display.pipelines[disp_pipeline];
             call.texture      = texture;
-            call.sampler      = texture->mipmap ?
+            call.sampler      = (texture->flags & VK_TEX_FLAG_MIPMAP) ?
                vk->samplers.mipmap_linear :
-               (texture->default_smooth ? vk->samplers.linear
+               ((texture->flags & VK_TEX_FLAG_DEFAULT_SMOOTH) ? vk->samplers.linear
                 : vk->samplers.nearest);
             call.uniform      = draw->matrix_data
                ? draw->matrix_data : &vk->mvp_no_rot;
@@ -276,7 +275,7 @@ static void gfx_display_vk_blend_begin(void *data)
    vk_t *vk = (vk_t*)data;
 
    if (vk)
-      vk->display.blend = true;
+      vk->flags |=  VK_FLAG_DISPLAY_BLEND;
 }
 
 static void gfx_display_vk_blend_end(void *data)
@@ -284,23 +283,7 @@ static void gfx_display_vk_blend_end(void *data)
    vk_t *vk = (vk_t*)data;
 
    if (vk)
-      vk->display.blend = false;
-}
-
-static bool gfx_display_vk_font_init_first(
-      void **font_handle, void *video_data, const char *font_path,
-      float menu_font_size, bool is_threaded)
-{
-   font_data_t **handle = (font_data_t**)font_handle;
-   *handle = font_driver_init_first(video_data,
-         font_path, menu_font_size, true,
-         is_threaded,
-         FONT_DRIVER_RENDER_VULKAN_API);
-
-   if (*handle)
-      return true;
-
-   return false;
+      vk->flags &= ~VK_FLAG_DISPLAY_BLEND;
 }
 
 static void gfx_display_vk_scissor_begin(
@@ -311,11 +294,11 @@ static void gfx_display_vk_scissor_begin(
 {
    vk_t *vk                          = (vk_t*)data;
 
-   vk->tracker.use_scissor           = true;
    vk->tracker.scissor.offset.x      = x;
    vk->tracker.scissor.offset.y      = y;
    vk->tracker.scissor.extent.width  = width;
    vk->tracker.scissor.extent.height = height;
+   vk->flags                        |= VK_FLAG_TRACKER_USE_SCISSOR;
    vk->tracker.dirty                |= VULKAN_DIRTY_DYNAMIC_BIT;
 }
 
@@ -325,8 +308,8 @@ static void gfx_display_vk_scissor_end(void *data,
 {
    vk_t *vk                 = (vk_t*)data;
 
-   vk->tracker.use_scissor  = false;
-   vk->tracker.dirty       |= VULKAN_DIRTY_DYNAMIC_BIT;
+   vk->flags               &= ~VK_FLAG_TRACKER_USE_SCISSOR;
+   vk->tracker.dirty       |=  VULKAN_DIRTY_DYNAMIC_BIT;
 }
 
 gfx_display_ctx_driver_t gfx_display_ctx_vulkan = {
@@ -341,7 +324,7 @@ gfx_display_ctx_driver_t gfx_display_ctx_vulkan = {
    gfx_display_vk_get_default_mvp,
    gfx_display_vk_get_default_vertices,
    gfx_display_vk_get_default_tex_coords,
-   gfx_display_vk_font_init_first,
+   FONT_DRIVER_RENDER_VULKAN_API,
    GFX_VIDEO_DRIVER_VULKAN,
    "vulkan",
    false,
